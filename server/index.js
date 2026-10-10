@@ -1,4 +1,5 @@
 'use strict';
+const fs = require('fs');
 const path = require('path');
 const http = require('http');
 const express = require('express');
@@ -36,8 +37,15 @@ app.use((req, res, next) => {
 
 app.get('/healthz', (req, res) => res.send('ok'));
 auth.routes(app);
-app.use(express.static(PUBLIC, { extensions: ['html'], maxAge: 0 })); // revalidate via ETag so updates show up immediately
-app.get('/r/:code', (req, res) => res.sendFile(path.join(PUBLIC, 'index.html')));
+// Each deploy gets its own asset version, so phones never keep an old app.js/app.css.
+const VERSION = (process.env.RENDER_GIT_COMMIT || Date.now().toString(36)).slice(0, 10);
+const INDEX = fs.readFileSync(path.join(PUBLIC, 'index.html'), 'utf8').replace(/__V__/g, VERSION);
+const sendIndex = (req, res) => { res.set('Cache-Control', 'no-cache'); res.type('html').send(INDEX); };
+app.get(['/', '/index.html', '/r/:code'], sendIndex);
+app.use(express.static(PUBLIC, {
+  extensions: ['html'], index: false,
+  setHeaders: (res) => res.set('Cache-Control', 'no-cache'), // always revalidate (cheap 304 via ETag)
+}));
 
 const server = http.createServer(app);
 const io = new Server(server, { maxHttpBufferSize: 1e4, pingInterval: 20000, pingTimeout: 25000 });

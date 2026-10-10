@@ -421,7 +421,7 @@
     renderStatus(g, a, b);
     renderActions(g, a, b);
     renderMe(g);
-    if (!reduceMotion) animateCards(g, snap); else for (const [id, e] of G.cards) if (!e.isConnected) G.cards.delete(id);
+    animateCards(g, snap);
 
     for (const ev of g.events) {
       if (ev.id <= S.seenEvent) continue;
@@ -599,6 +599,9 @@
   }
   addEventListener('resize', () => { if (!$('scrGame').hidden) layoutHand(); });
 
+  const degOf = (r) => { const v = parseFloat(r); return Number.isFinite(v) ? v : 0; };
+  const baseTransform = (e) => { const t = getComputedStyle(e).transform; return !t || t === 'none' ? '' : t; };
+
   function animateCards(g, snap) {
     const handBox = $('hand').getBoundingClientRect();
     const anchor = (k) => {
@@ -613,21 +616,27 @@
       if (!e.isConnected) continue;
       const now = centerOf(e.getBoundingClientRect());
       const rot = cssRot(e);
+      const base = baseTransform(e);
       const prev = snap.get(id);
       if (prev) {
         e._fresh = false;
+        if (reduceMotion) continue;
         const dx = prev.c.x - now.x; const dy = prev.c.y - now.y;
-        if (Math.abs(dx) < 0.5 && Math.abs(dy) < 0.5 && prev.rot === rot) continue;
-        e.animate([{ translate: `${dx}px ${dy}px`, rotate: prev.rot }, { translate: '0px 0px', rotate: rot }],
-          { duration: MOVE_MS, easing: EASE });
+        const dr = degOf(prev.rot) - degOf(rot);
+        if (Math.abs(dx) < 0.5 && Math.abs(dy) < 0.5 && Math.abs(dr) < 0.1) continue;
+        e.animate([
+          { transform: `translate(${dx}px, ${dy}px) rotate(${dr}deg) ${base}` },
+          { transform: base || 'none' },
+        ], { duration: MOVE_MS, easing: EASE });
       } else if (e._fresh) {
         e._fresh = false;
+        if (reduceMotion) { e.animate([{ opacity: 0 }, { opacity: 1 }], { duration: 200 }); continue; }
         const inHand = !!e.closest('#hand');
         const from = inHand ? pileC : anchor(Number(e.dataset.by));
         const delay = inHand ? Math.min(dealt++, 8) * 40 : 0;
         e.animate([
-          { translate: `${from.x - now.x}px ${from.y - now.y}px`, scale: 0.6, opacity: 0, rotate: rot },
-          { translate: '0px 0px', scale: 1, opacity: 1, rotate: rot },
+          { transform: `translate(${from.x - now.x}px, ${from.y - now.y}px) scale(.6) ${base}`, opacity: 0 },
+          { transform: base || 'none', opacity: 1 },
         ], { duration: MOVE_MS + 30, easing: EASE, delay, fill: 'backwards' });
       }
     }
@@ -650,12 +659,16 @@
     const gh = e.cloneNode(true);
     gh.classList.remove('sel', 'ok', 'no', 'marked', 'accusable', 'def');
     gh.classList.add('fly');
-    gh.style.cssText = `left:${prev.c.x - prev.w / 2}px;top:${prev.c.y - prev.h / 2}px;rotate:${prev.rot}`;
+    gh.style.cssText = `left:${prev.c.x - prev.w / 2}px;top:${prev.c.y - prev.h / 2}px`;
     document.body.append(gh);
-    const an = gh.animate([
-      { translate: '0px 0px', scale: 1, opacity: 1 },
-      { translate: `${dest.x - prev.c.x}px ${dest.y - prev.c.y}px`, scale: 0.4, opacity: 0 },
-    ], { duration: 320, easing: 'cubic-bezier(.45,0,.55,1)', fill: 'forwards' });
+    const r = degOf(prev.rot);
+    const frames = reduceMotion
+      ? [{ opacity: 1, transform: `rotate(${r}deg)` }, { opacity: 0, transform: `rotate(${r}deg)` }]
+      : [
+        { transform: `translate(0px, 0px) rotate(${r}deg) scale(1)`, opacity: 1 },
+        { transform: `translate(${dest.x - prev.c.x}px, ${dest.y - prev.c.y}px) rotate(${r}deg) scale(.4)`, opacity: 0 },
+      ];
+    const an = gh.animate(frames, { duration: reduceMotion ? 200 : 320, easing: 'cubic-bezier(.45,0,.55,1)', fill: 'forwards' });
     const done = () => gh.remove();
     an.finished.then(done, done);
   }
