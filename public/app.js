@@ -363,8 +363,10 @@
   /* ---------------- game ---------------- */
   const nameOf = (g, k) => (k === g.me ? 'Ви' : (g.names[k] ? g.names[k].name : '?'));
   const reduceMotion = window.matchMedia && matchMedia('(prefers-reduced-motion: reduce)').matches;
-  const EASE = 'cubic-bezier(.2,.8,.2,1)';
-  const MOVE_MS = 250;
+  const EASE = 'cubic-bezier(.22,1,.36,1)';
+  const MOVE_MS = 300;
+  const TURN_MS = 30000;
+  const RING_C = 2 * Math.PI * 18;
 
   // Card and seat elements live for the whole game and are moved, never re-created,
   // so every change can be animated from where the card really was (FLIP).
@@ -442,6 +444,7 @@
         const pill = el('div', 'seat-pill');
         const ring = el('div', 'ava-ring');
         ring.append(avatar(g.names[idx]));
+        ring.insertAdjacentHTML('beforeend', `<svg class="tring" viewBox="0 0 40 40" aria-hidden="true"><circle class="bg" cx="20" cy="20" r="18"/><circle class="fg" cx="20" cy="20" r="18" stroke-dasharray="${RING_C}" stroke-dashoffset="0"/></svg>`);
         const txt = el('div', 'txt');
         const nm = el('span', 'nm'); const cnt = el('span', 'cnt');
         txt.append(nm, cnt); pill.append(ring, txt);
@@ -449,7 +452,7 @@
         const bubble = el('div', 'bubble', 'пас'); bubble.hidden = true;
         box.append(fan, pill, roleSlot, bubble);
         host.append(box);
-        G.opps[idx] = { box, fan, ring, nm, cnt, roleSlot, bubble, shown: -1, roleKey: '' };
+        G.opps[idx] = { box, fan, ring, nm, cnt, roleSlot, bubble, roleKey: '', fg: ring.querySelector('.fg'), dl: 0, lowT: null };
       }
       G.built = true;
     }
@@ -460,16 +463,13 @@
       const cnt = p.out ? (p.place === 1 ? 'вийшов першим' : `вийшов · ${p.place}`) : cardsWord(p.cards);
       if (o.cnt.textContent !== cnt) o.cnt.textContent = cnt;
       const shown = Math.min(p.cards, 8);
-      if (o.shown !== shown) {
-        o.shown = shown; o.fan.innerHTML = '';
-        const mid = (shown - 1) / 2;
-        for (let j = 0; j < shown; j++) {
-          const bk = el('div', 'back');
-          bk.style.rotate = `${(j - mid) * 7}deg`;
-          bk.style.translate = `0 ${Math.abs(j - mid) * 1.6}px`;
-          o.fan.append(bk);
-        }
-      }
+      while (o.fan.children.length < shown) { const bk = el('div', 'back enter'); o.fan.append(bk); }
+      while (o.fan.children.length > shown) o.fan.lastElementChild.remove();
+      const mid = (shown - 1) / 2;
+      [...o.fan.children].forEach((bk, j) => {
+        bk.style.rotate = `${((j - mid) * 7).toFixed(1)}deg`;
+        bk.style.translate = `0 ${(Math.abs(j - mid) * 1.6).toFixed(1)}px`;
+      });
       const role = roleOf(g, idx);
       const rk = role ? role.cls + role.text : '';
       if (o.roleKey !== rk) {
@@ -479,7 +479,7 @@
       const turn = g.required.includes(idx) && !g.over;
       o.box.classList.toggle('turn', turn);
       o.box.classList.toggle('away', !info.connected);
-      o.box.dataset.deadline = turn && g.deadline ? g.deadline : '';
+      runCountdown(o, turn && g.deadline ? g.deadline : 0);
       o.bubble.hidden = !(p.passed && !p.out && !g.over);
     });
   }
@@ -633,11 +633,12 @@
         if (reduceMotion) { e.animate([{ opacity: 0 }, { opacity: 1 }], { duration: 200 }); continue; }
         const inHand = !!e.closest('#hand');
         const from = inHand ? pileC : anchor(Number(e.dataset.by));
-        const delay = inHand ? Math.min(dealt++, 8) * 40 : 0;
+        const delay = inHand ? Math.min(dealt++, 8) * 55 : 0;
         e.animate([
-          { transform: `translate(${from.x - now.x}px, ${from.y - now.y}px) scale(.6) ${base}`, opacity: 0 },
-          { transform: base || 'none', opacity: 1 },
-        ], { duration: MOVE_MS + 30, easing: EASE, delay, fill: 'backwards' });
+          { transform: `translate(${from.x - now.x}px, ${from.y - now.y}px) scale(.55) ${base}`, opacity: 0, offset: 0 },
+          { opacity: 1, offset: 0.3 },
+          { transform: base || 'none', opacity: 1, offset: 1 },
+        ], { duration: MOVE_MS + 40, easing: EASE, delay, fill: 'backwards' });
       }
     }
     // cards that left the table: beaten off, taken by an opponent, or swept up by a caught cheat
@@ -668,7 +669,7 @@
         { transform: `translate(0px, 0px) rotate(${r}deg) scale(1)`, opacity: 1 },
         { transform: `translate(${dest.x - prev.c.x}px, ${dest.y - prev.c.y}px) rotate(${r}deg) scale(.4)`, opacity: 0 },
       ];
-    const an = gh.animate(frames, { duration: reduceMotion ? 200 : 320, easing: 'cubic-bezier(.45,0,.55,1)', fill: 'forwards' });
+    const an = gh.animate(frames, { duration: reduceMotion ? 200 : 380, easing: 'cubic-bezier(.65,0,.35,1)', fill: 'forwards' });
     const done = () => gh.remove();
     an.finished.then(done, done);
   }
@@ -716,9 +717,11 @@
     const sig = main + '|' + sub;
     if (G.statusSig === sig) return;
     G.statusSig = sig;
-    const st = $('status'); st.innerHTML = '';
+    const st = $('status');
+    st.innerHTML = '';
     st.append(main);
     if (sub) st.append(el('small', null, sub));
+    if (!reduceMotion) st.animate([{ opacity: 0, transform: 'translateY(4px)' }, { opacity: 1, transform: 'none' }], { duration: 220, easing: EASE });
   }
 
   function renderActions(g, a, b) {
@@ -765,7 +768,7 @@
     const t = $('myTimer');
     const mine = g.required.includes(me) && !!g.deadline && !g.over;
     t.classList.toggle('on', mine);
-    t.dataset.deadline = mine ? g.deadline : '';
+    runBar(t, mine ? g.deadline : 0);
   }
 
   async function act(action) {
@@ -837,24 +840,36 @@
     }
   }
 
-  /* turn timers: ring around the avatar for opponents, a bar for you */
-  setInterval(() => {
-    const now = Date.now() + S.clockOffset;
-    for (const o of G.opps) {
-      if (!o) continue;
-      const d = Number(o.box.dataset.deadline);
-      if (!d) continue;
-      const left = Math.max(0, d - now);
-      o.ring.style.setProperty('--p', Math.min(1, left / 30000).toFixed(3));
-      o.box.classList.toggle('low', left < 8000);
-    }
-    const t = $('myTimer'); const d = Number(t.dataset.deadline);
-    if (d) {
-      const left = Math.max(0, d - now);
-      t.firstElementChild.style.transform = `scaleX(${Math.min(1, left / 30000)})`;
-      t.classList.toggle('low', left < 8000);
-    }
-  }, 200);
+  /* turn timers: one CSS transition per turn, so the ring and bar drain at a steady 60 fps */
+  function runCountdown(o, deadline) {
+    if (o.dl === deadline) return;
+    o.dl = deadline;
+    clearTimeout(o.lowT); o.box.classList.remove('low');
+    const fg = o.fg;
+    fg.style.transition = 'none';
+    if (!deadline) { fg.style.strokeDashoffset = '0'; return; }
+    const left = Math.max(0, deadline - (Date.now() + S.clockOffset));
+    fg.style.strokeDashoffset = String(RING_C * (1 - Math.min(1, left / TURN_MS)));
+    fg.getBoundingClientRect();
+    fg.style.transition = `stroke-dashoffset ${left}ms linear, stroke .3s`;
+    fg.style.strokeDashoffset = String(RING_C);
+    o.lowT = setTimeout(() => o.box.classList.add('low'), Math.max(0, left - 8000));
+  }
+  let barDl = 0; let barLowT = null;
+  function runBar(t, deadline) {
+    if (barDl === deadline) return;
+    barDl = deadline;
+    clearTimeout(barLowT); t.classList.remove('low');
+    const bar = t.firstElementChild;
+    bar.style.transition = 'none';
+    if (!deadline) { bar.style.transform = 'scaleX(1)'; return; }
+    const left = Math.max(0, deadline - (Date.now() + S.clockOffset));
+    bar.style.transform = `scaleX(${Math.min(1, left / TURN_MS)})`;
+    bar.getBoundingClientRect();
+    bar.style.transition = `transform ${left}ms linear, background .3s`;
+    bar.style.transform = 'scaleX(0)';
+    barLowT = setTimeout(() => t.classList.add('low'), Math.max(0, left - 8000));
+  }
 
   /* ---------------- result ---------------- */
   function showResult(v) {
