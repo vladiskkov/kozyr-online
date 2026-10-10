@@ -16,7 +16,8 @@ services:
         value: "22"
       - key: SESSION_SECRET
         generateValue: true
+      # Client ID is public (it is visible in the page anyway); the secret is never needed
       - key: GOOGLE_CLIENT_ID
-        sync: false
+        value: 96122002055-12t0takn8c80cb4u530epn1ti05lh8v8.apps.googleusercontent.com
       - key: ALLOW_GUESTS
         value: "true"
