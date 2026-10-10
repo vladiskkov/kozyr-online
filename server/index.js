@@ -36,7 +36,7 @@ app.use((req, res, next) => {
 
 app.get('/healthz', (req, res) => res.send('ok'));
 auth.routes(app);
-app.use(express.static(PUBLIC, { extensions: ['html'], maxAge: '1h' }));
+app.use(express.static(PUBLIC, { extensions: ['html'], maxAge: 0 })); // revalidate via ETag so updates show up immediately
 app.get('/r/:code', (req, res) => res.sendFile(path.join(PUBLIC, 'index.html')));
 
 const server = http.createServer(app);
