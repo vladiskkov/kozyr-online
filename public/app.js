@@ -423,7 +423,15 @@
     renderStatus(g, a, b);
     renderActions(g, a, b);
     renderMe(g);
-    animateCards(g, snap);
+    if (document.hidden || G.calm) {
+      G.calm = false;
+      clearFlying();
+      for (const [id, e] of G.cards) if (!e.isConnected) G.cards.delete(id);
+      for (const e of G.cards.values()) e._fresh = false;
+    } else {
+      animateCards(g, snap);
+    }
+    verifyBoard(v);
 
     for (const ev of g.events) {
       if (ev.id <= S.seenEvent) continue;
@@ -432,6 +440,29 @@
       if (msg) toast(msg.text, msg.kind);
     }
   }
+
+  function clearFlying() { document.querySelectorAll('.fly').forEach((x) => x.remove()); }
+
+  /** The screen must show exactly the server's hand and table; if not, rebuild from scratch. */
+  function verifyBoard(v) {
+    const g = v.game;
+    const hand = [...$('hand').children].map((e) => e.dataset.card).join();
+    const table = [...$('battle').querySelectorAll('.card')].map((e) => e.dataset.card).sort().join();
+    const srvTable = (g.bout ? g.bout.table.flatMap((p) => (p.d ? [p.a.id, p.d.id] : [p.a.id])) : []).sort().join();
+    if (hand === g.hand.map((c) => c.id).join() && table === srvTable) return;
+    if (G.rebuilding) return;
+    console.warn('[board] mismatch, rebuilding');
+    G.rebuilding = true;
+    resetBoard(); G.key = `${v.code}:${v.games}`; G.calm = true;
+    try { renderGame(v); } finally { G.rebuilding = false; }
+  }
+
+  document.addEventListener('visibilitychange', () => {
+    if (document.hidden) return;
+    clearFlying();
+    for (const e of G.cards.values()) e.getAnimations().forEach((an) => an.finish());
+    if (S.room && S.room.game && !$('scrGame').hidden) { G.calm = true; renderGame(S.room); }
+  });
 
   function renderOpponents(g) {
     const n = g.names.length; const me = g.me;
@@ -672,6 +703,7 @@
     const an = gh.animate(frames, { duration: reduceMotion ? 200 : 380, easing: 'cubic-bezier(.65,0,.35,1)', fill: 'forwards' });
     const done = () => gh.remove();
     an.finished.then(done, done);
+    setTimeout(done, 700); // never let a flying copy linger, even if the browser paused animations
   }
 
   function roleOf(g, k) {
@@ -834,8 +866,8 @@
         if (ev.cheater === me) return { text: `${nm(ev.by)} вас викрив(ла)! Ви забираєте ${cardsWord(ev.count)}`, kind: 'alarm' };
         return { text: `${nm(ev.by)} викриває ${nm(ev.cheater)}! Шахрай забирає ${cardsWord(ev.count)}`, kind: 'cheat' };
       case 'falseAccuse':
-        if (ev.by === me) return { text: `${nm(ev.accused)} грав(ла) чесно. ${ev.penalty ? 'Ви берете штрафну карту' : 'Штрафу немає — колода порожня'}`, kind: 'alarm' };
-        return { text: `${nm(ev.by)} помилково звинувачує ${ev.accused === me ? 'вас' : nm(ev.accused)} і бере штрафну карту`, kind: 'cheat' };
+        if (ev.by === me) return { text: `${nm(ev.accused)} грав(ла) чесно. ${ev.penalty ? 'Ви берете штрафну карту з колоди' : 'Колода порожня, тож до кінця партії ви не можете викривати'}`, kind: 'alarm' };
+        return { text: `${nm(ev.by)} помилково звинувачує ${ev.accused === me ? 'вас' : nm(ev.accused)} і ${ev.penalty ? 'бере штрафну карту' : 'втрачає право викривати'}`, kind: 'cheat' };
       default: return null;
     }
   }

@@ -23,6 +23,7 @@ function play(cfg, seed) {
   while (!g.over) {
     assert.ok(++steps < 3000, 'game too long');
     assert.strictEqual(totalCards(g), 36, 'cards must be conserved');
+    g.checkIntegrity(); // 36 unique cards, trump at the bottom
     // shuffle who gets to act first, like real concurrency
     const order = players.map((_, i) => i).sort(() => rng() - 0.5);
     let acted = false;
@@ -88,6 +89,20 @@ test('cheat is caught and cheater takes the table', () => {
     return;
   }
   assert.fail('no scenario found');
+});
+
+test('false accusation with an empty deck never recycles beaten cards', () => {
+  const g = new Game({ players: [{ id: 'a' }, { id: 'b' }], cheat: true, rng: seeded(5) });
+  g.discard.push(...g.deck.splice(0)); // pretend the deck ran out
+  const att = g.bout.attacker; const def = g.bout.defender;
+  const c = g.hand(att)[0];
+  g.act(att, { type: 'throw', card: c.id });
+  const before = g.hand(def).map((x) => x.id).join();
+  const disc = g.discard.length;
+  assert.ok(g.act(def, { type: 'accuse', card: c.id }).ok);
+  assert.strictEqual(g.hand(def).map((x) => x.id).join(), before, 'no card from the discard pile');
+  assert.strictEqual(g.discard.length, disc);
+  assert.ok(g.noAccuse.has(def));
 });
 
 test('false accusation costs a card', () => {

@@ -33,6 +33,7 @@ class Game {
     this.events = [];
     this.eventSeq = 0;
     this.lastBout = null; // summary of the previous bout for the UI
+    this.noAccuse = new Set(); // players who lost the right to accuse
     this._start();
   }
 
@@ -142,11 +143,23 @@ class Game {
     };
   }
 
+  /** Every one of the 36 cards must be in exactly one place: deck, discard, a hand or the table. */
+  checkIntegrity() {
+    const seen = new Set(); let n = 0;
+    const add = (c) => { n++; seen.add(c.id); };
+    this.deck.forEach(add); this.discard.forEach(add);
+    this.players.forEach((p) => p.hand.forEach(add));
+    if (this.bout) this.bout.table.forEach((p) => { add(p.a); if (p.d) add(p.d); });
+    if (n !== 36 || seen.size !== 36) throw new Error(`card integrity broken: ${n} cards, ${seen.size} unique`);
+    if (this.deck.length && this.deck[0].id !== this.trumpCard.id) throw new Error('trump card is not at the bottom of the deck');
+  }
+
   _after() {
     const b = this.bout;
     if (!this.over && b.table.length && (b.taking || this.unbeatenCount() === 0) && this.waitingAttackers().length === 0) {
       this._endBout(b.taking);
     }
+    try { this.checkIntegrity(); } catch (e) { console.error('[game]', e.message, JSON.stringify(this.events.slice(-5))); }
     this.version++;
   }
 
@@ -286,6 +299,7 @@ class Game {
   accuse(i, cardId) {
     if (!this.cheat) throw new GameError('Махлювання в цій грі вимкнене');
     const b = this.bout;
+    if (this.noAccuse.has(i)) throw new GameError('Після помилкового звинувачення ви більше не можете викривати в цій партії');
     if (b.accused.has(i)) throw new GameError('Ви вже викривали в цьому відбої');
     let by = -1; let cheated = false;
     for (const p of b.table) {
@@ -304,11 +318,17 @@ class Game {
       // cheater takes everything; the bout ends as if the defender took (cheater = defender) or beat it off
       this._endBoutAfterCatch(wasDefender, by, cards.length);
     } else {
-      let penalty = null;
-      if (this.deck.length) penalty = this.deck.pop();
-      else if (this.discard.length) penalty = this.discard.splice(Math.floor(this.rng() * this.discard.length), 1)[0];
-      if (penalty) { this.hand(i).push(penalty); Rules.sortHand(this.hand(i), this.trump); }
-      this._event('falseAccuse', i, { accused: by, card: cardId, penalty: !!penalty });
+      // Penalty: a card from the deck. Beaten cards never come back into play, so with an
+      // empty deck the false accuser instead loses the right to accuse for the rest of the game.
+      let penalty = false;
+      if (this.deck.length) {
+        this.hand(i).push(this.deck.pop());
+        Rules.sortHand(this.hand(i), this.trump);
+        penalty = true;
+      } else {
+        this.noAccuse.add(i);
+      }
+      this._event('falseAccuse', i, { accused: by, card: cardId, penalty, banned: !penalty });
     }
     this._after();
   }
@@ -334,7 +354,7 @@ class Game {
       transfer: this.canTransferNow(i),
       take: i === b.defender && !b.taking && this.unbeatenCount() > 0,
       pass: !!isAtt && b.table.length > 0 && !b.passed.has(i) && this.hand(i).length > 0,
-      accuse: this.cheat && !b.accused.has(i) && b.table.some((p) => p.aBy !== i || (p.d && p.dBy !== i)),
+      accuse: this.cheat && !b.accused.has(i) && !this.noAccuse.has(i) && b.table.some((p) => p.aBy !== i || (p.d && p.dBy !== i)),
     } : null;
     return {
       version: this.version,
