@@ -48,12 +48,12 @@
     <div class="home-body">
       <h1 class="hello" id="hello">Привіт!</h1>
       <div class="mode-grid">
-        <button class="mode-card" id="playBots">
+        <button class="mode-card" id="playBots" data-suit="♣">
           <span class="mode-suit">♣</span>
           <span class="mode-title">З ботами</span>
           <span class="mode-sub">Від 1 до 3 суперників, три рівні складності</span>
         </button>
-        <button class="mode-card accent" id="playFriends">
+        <button class="mode-card accent" id="playFriends" data-suit="♥">
           <span class="mode-suit">♥</span>
           <span class="mode-title">З друзями</span>
           <span class="mode-sub">Кімната з посиланням-запрошенням, можна додати ботів</span>
@@ -124,10 +124,10 @@
     </div>
     <div class="controls">
       <div class="status" id="status"></div>
+      <div class="timer" id="myTimer"><i></i></div>
       <div class="actions" id="actions"></div>
     </div>
     <div class="me-zone">
-      <div class="timer" id="myTimer"><i></i></div>
       <div class="hand" id="hand"></div>
       <div class="me-line" id="meLine"></div>
     </div>

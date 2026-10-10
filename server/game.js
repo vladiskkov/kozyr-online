@@ -75,8 +75,12 @@ class Game {
   unbeatenCount() { return this.bout.table.filter((p) => !p.d).length; }
   roomForThrow() { return this.bout.table.length < this.bout.limit; }
   hasLegalThrow(i) { return this.hand(i).some((c) => Rules.canThrowCard(this.bout.table, c)); }
+  /**
+   * An attacker with cards must explicitly say «Бито»/«Пас», even with nothing to throw:
+   * ending the bout automatically would tell everyone that this player has no matching ranks.
+   */
   _wantsTurn(i) {
-    return !this.bout.passed.has(i) && this.hand(i).length > 0 && (this.cheat || this.hasLegalThrow(i));
+    return !this.bout.passed.has(i) && this.hand(i).length > 0;
   }
 
   /** In 'order' mode: who holds the right to throw right now (-1 = nobody). */

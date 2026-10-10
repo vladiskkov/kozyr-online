@@ -116,3 +116,23 @@ test('transfer passes defence to next player', () => {
   }
   assert.fail('no scenario found');
 });
+
+test('beaten cards stay on the table until the attacker says «Бито»', () => {
+  for (let s = 1; s < 2000; s++) {
+    const g = new Game({ players: [{ id: 'a' }, { id: 'b' }], rng: seeded(s) });
+    const att = g.bout.attacker; const def = g.bout.defender;
+    const c = g.hand(att).find((x) => g.hand(att).filter((y) => y.r === x.r).length === 1);
+    if (!c) continue;
+    const beater = g.hand(def).find((x) => require('../public/rules.js').beats(c, x, g.trump) && !g.hand(att).some((y) => y.r === x.r && y.id !== c.id));
+    if (!beater) continue;
+    g.act(att, { type: 'throw', card: c.id });
+    assert.ok(g.act(def, { type: 'defend', card: beater.id, target: 0 }).ok);
+    assert.strictEqual(g.hasLegalThrow(att), false);
+    assert.strictEqual(g.bout.table.length, 1, 'bout must wait for the attacker');
+    assert.deepStrictEqual(g.required(), [att]);
+    assert.ok(g.act(att, { type: 'pass' }).ok);
+    assert.strictEqual(g.bout.table.length, 0);
+    return;
+  }
+  assert.fail('no scenario found');
+});

@@ -13,7 +13,7 @@
     user: null, config: null, socket: null,
     room: null, code: null,
     sel: null, mark: null,
-    seenEvent: 0, seenTable: new Set(), tableWasEmpty: true,
+    seenEvent: 0,
     clockOffset: 0, setupKind: null, setupSettings: null,
     viewLobby: false, resultFor: null, leaving: false,
   };
@@ -39,7 +39,7 @@
   function toast(text, kind = '') {
     const t = el('div', 'toast ' + kind, text);
     $('toasts').appendChild(t);
-    setTimeout(() => t.remove(), kind === 'alarm' || kind === 'cheat' ? 5000 : 3200);
+    setTimeout(() => { t.classList.add('out'); setTimeout(() => t.remove(), 260); }, kind === 'alarm' || kind === 'cheat' ? 5000 : 3000);
     while ($('toasts').children.length > 3) $('toasts').firstChild.remove();
   }
   async function api(path, body) {
@@ -291,15 +291,19 @@
       return;
     }
     if (v.game) {
-      if (prevStatus !== 'playing' && v.status === 'playing') { S.seenEvent = 0; S.seenTable.clear(); S.sel = S.mark = null; }
-      renderGame(v); show('scrGame');
+      if (prevStatus !== 'playing' && v.status === 'playing') { S.seenEvent = 0; S.sel = S.mark = null; }
+      show('scrGame'); renderGame(v);
       if (v.game.over && S.resultFor !== v.games) { S.resultFor = v.games; setTimeout(() => showResult(S.room), 700); }
       if (!v.game.over) $('result').hidden = true;
     }
   }
 
   /* ---------------- lobby ---------------- */
+  let lobbySig = '';
   function renderLobby(v) {
+    const sig = JSON.stringify([v.code, v.status, v.isHost, v.settings, v.seats]);
+    if (sig === lobbySig && !$('scrLobby').hidden) return;
+    lobbySig = sig;
     $('roomCode').textContent = v.code;
     $('linkField').value = `${location.origin}/r/${v.code}`;
     const box = $('seats'); box.innerHTML = '';
@@ -358,143 +362,302 @@
 
   /* ---------------- game ---------------- */
   const nameOf = (g, k) => (k === g.me ? 'Ви' : (g.names[k] ? g.names[k].name : '?'));
+  const reduceMotion = window.matchMedia && matchMedia('(prefers-reduced-motion: reduce)').matches;
+  const EASE = 'cubic-bezier(.2,.8,.2,1)';
+  const MOVE_MS = 250;
+
+  // Card and seat elements live for the whole game and are moved, never re-created,
+  // so every change can be animated from where the card really was (FLIP).
+  const G = { key: null, cards: new Map(), pairs: new Map(), opps: [], built: false, actSig: '', statusSig: '', pileSig: '' };
+
+  function resetBoard() {
+    G.cards.clear(); G.pairs.clear(); G.opps = []; G.built = false; G.actSig = G.statusSig = G.pileSig = '';
+    $('hand').innerHTML = ''; $('battle').innerHTML = ''; $('opponents').innerHTML = '';
+  }
+
+  function cardNode(c, trump) {
+    let e = G.cards.get(c.id);
+    if (!e) { e = cardEl(c, trump); e.dataset.card = c.id; e._fresh = true; G.cards.set(c.id, e); }
+    return e;
+  }
+  const centerOf = (r) => ({ x: r.left + r.width / 2, y: r.top + r.height / 2 });
+  const cssRot = (e) => { const r = getComputedStyle(e).rotate; return !r || r === 'none' ? '0deg' : r; };
+
+  function snapshot() {
+    const snap = new Map();
+    for (const [id, e] of G.cards) {
+      if (!e.isConnected) continue;
+      snap.set(id, { c: centerOf(e.getBoundingClientRect()), w: e.offsetWidth, h: e.offsetHeight, rot: cssRot(e) });
+    }
+    return snap;
+  }
+
+  function syncChildren(parent, nodes) {
+    nodes.forEach((node, i) => { if (parent.children[i] !== node) parent.insertBefore(node, parent.children[i] || null); });
+    while (parent.children.length > nodes.length) parent.lastChild.remove();
+  }
 
   function renderGame(v) {
-    const g = v.game; const me = g.me; const n = g.names.length;
+    const g = v.game;
+    const key = `${v.code}:${v.games}`;
+    if (G.key !== key) { resetBoard(); G.key = key; }
+    const snap = snapshot();
     const b = g.bout || { table: [], attacker: -1, defender: -1 };
-    const table = b.table;
+    const a = g.actions || {};
 
-    // keep selection only if still meaningful
-    if (S.sel && (!g.hand.some((c) => c.id === S.sel) || !(g.actions && (g.actions.defend || g.actions.throw)))) S.sel = null;
-    if (S.mark && !table.some((p) => p.a.id === S.mark || (p.d && p.d.id === S.mark))) S.mark = null;
+    if (S.sel && (!g.hand.some((c) => c.id === S.sel) || !(a.defend || a.throw))) S.sel = null;
+    if (S.mark && !b.table.some((p) => p.a.id === S.mark || (p.d && p.d.id === S.mark))) S.mark = null;
 
-    // header chip
+    const n = g.names.length;
     const bits = [VARIANT[g.variant], `${n} ${plural(n, 'гравець', 'гравці', 'гравців')}`];
     if (n > 2) bits.push(THROW[g.throwMode]);
     if (g.cheat) bits.push('махлювання');
     $('rulesChip').textContent = bits.join(' · ');
 
-    // opponents (clockwise after me)
-    const opp = $('opponents'); opp.innerHTML = '';
-    for (let k = 1; k < n; k++) {
-      const idx = me >= 0 ? (me + k) % n : k - 1;
-      const p = g.players[idx]; const info = g.names[idx];
-      const box = el('div', 'opp');
-      if (g.required.includes(idx)) box.classList.add('turn');
-      if (!info.connected) box.classList.add('away');
-      const fan = el('div', 'fan');
-      const shown = Math.min(p.cards, 8);
-      for (let j = 0; j < shown; j++) {
-        const bk = el('div', 'back');
-        const mid = (shown - 1) / 2;
-        bk.style.transform = `rotate(${(j - mid) * 6}deg) translateY(${Math.abs(j - mid) * 1.5}px)`;
-        fan.append(bk);
-      }
-      box.append(fan);
-      const nr = el('div', 'name-row');
-      nr.append(avatar(info), el('span', 'nm', info.name));
-      box.append(nr);
-      const sub = el('div', 'sub');
-      sub.append(el('span', null, p.out ? '' : cardsWord(p.cards)));
-      const role = roleOf(g, idx);
-      if (role) sub.append(el('span', 'role ' + role.cls, role.text));
-      box.append(sub);
-      if (p.passed && !p.out) box.append(el('div', 'bubble', 'пас'));
-      if (g.required.includes(idx) && g.deadline) { const ring = el('div', 'ring'); ring.append(el('i')); ring.dataset.deadline = g.deadline; box.append(ring); }
-      opp.append(box);
-    }
-
-    // pile
-    const pile = $('pile'); pile.innerHTML = '';
-    pile.append(el('span', 'trump-label', 'козир'));
-    if (g.deck > 0) {
-      const tc = cardEl(g.trumpCard, g.trump); tc.classList.add('trump'); pile.append(tc);
-      if (g.deck > 1) pile.append(el('div', 'back top'));
-      pile.append(el('span', 'count', String(g.deck)));
-    } else {
-      pile.append(el('div', 'suit-badge' + (R.isRed(g.trump) ? ' red' : ''), g.trump));
-    }
-    $('discard').textContent = g.discard ? `Бито: ${g.discard}` : '';
-
-    // table
-    const a = g.actions || {};
-    const battle = $('battle'); battle.innerHTML = '';
-    document.querySelector('.felt').classList.toggle('taking', !!b.taking);
-    if (!table.length) { S.seenTable.clear(); }
-    const selCard = S.sel ? g.hand.find((c) => c.id === S.sel) : null;
-    if (!table.length) {
-      let hint;
-      if (g.over) hint = 'Партію завершено';
-      else if (a.throw) hint = 'Ваш хід. Торкніться карти, щоб атакувати.';
-      else hint = `${nameOf(g, b.attacker)} ${b.attacker === me ? 'ходите' : 'обирає карту'}…`;
-      battle.append(el('div', 'empty-hint', hint));
-    }
-    table.forEach((p, i) => {
-      const pair = el('div', 'pair');
-      const ac = cardEl(p.a, g.trump);
-      if (!S.seenTable.has(p.a.id)) ac.classList.add('enter');
-      ac.dataset.pair = i; ac.dataset.card = p.a.id; ac.dataset.by = p.aBy;
-      pair.append(ac);
-      if (p.d) {
-        const dc = cardEl(p.d, g.trump); dc.classList.add('def');
-        if (!S.seenTable.has(p.d.id)) dc.classList.add('enter');
-        dc.dataset.pair = i; dc.dataset.card = p.d.id; dc.dataset.by = p.dBy;
-        pair.append(dc);
-      }
-      if (selCard && a.defend && !p.d) {
-        const ok = R.beats(p.a, selCard, g.trump);
-        if (ok || g.cheat) { pair.classList.add('target'); if (!ok) pair.classList.add('cheaty'); }
-      }
-      if (g.cheat && a.accuse) {
-        if (p.aBy !== me) ac.classList.add('accusable');
-        if (p.d && p.dBy !== me) pair.querySelector('.def').classList.add('accusable');
-      }
-      if (S.mark) pair.querySelectorAll('.card').forEach((c) => { if (c.dataset.card === S.mark) c.classList.add('marked'); });
-      if (n > 2) pair.append(el('span', 'by', nameOf(g, p.aBy)));
-      battle.append(pair);
-    });
-    table.forEach((p) => { S.seenTable.add(p.a.id); if (p.d) S.seenTable.add(p.d.id); });
-
-    // hand
-    const hand = $('hand'); hand.innerHTML = '';
-    const active = !!(a.defend || a.throw);
-    hand.classList.toggle('active', active);
-    hand.classList.toggle('cheat', !!g.cheat);
-    const unbeaten = table.filter((p) => !p.d);
-    g.hand.forEach((c) => {
-      const ce = cardEl(c, g.trump);
-      ce.dataset.card = c.id; ce.tabIndex = 0; ce.setAttribute('role', 'button');
-      let ok = false;
-      if (a.defend) ok = unbeaten.some((p) => R.beats(p.a, c, g.trump)) || (a.transfer && R.canTransferCard(table, c));
-      else if (a.throw) ok = R.canThrowCard(table, c);
-      if (active) ce.classList.add(ok ? 'ok' : 'no');
-      if (S.sel === c.id) ce.classList.add('sel');
-      hand.append(ce);
-    });
-    layoutHand();
-
-    // status + actions
+    renderOpponents(g);
+    renderPile(g);
+    renderTable(g, a, b);
+    renderHand(g, a, b);
     renderStatus(g, a, b);
-    renderActions(g, a, b, selCard);
+    renderActions(g, a, b);
+    renderMe(g);
+    if (!reduceMotion) animateCards(g, snap); else for (const [id, e] of G.cards) if (!e.isConnected) G.cards.delete(id);
 
-    // me line
-    const ml = $('meLine'); ml.innerHTML = '';
-    if (me >= 0) {
-      const role = roleOf(g, me);
-      ml.append(el('span', null, `Ви · ${cardsWord(g.hand.length)}`));
-      if (role) ml.append(el('span', 'role ' + role.cls, role.text));
-    }
-    const t = $('myTimer');
-    t.classList.toggle('on', g.required.includes(me) && !!g.deadline);
-    t.dataset.deadline = g.required.includes(me) && g.deadline ? g.deadline : '';
-
-    // events → toasts
     for (const ev of g.events) {
       if (ev.id <= S.seenEvent) continue;
       S.seenEvent = ev.id;
       const msg = eventText(g, ev);
       if (msg) toast(msg.text, msg.kind);
     }
+  }
+
+  function renderOpponents(g) {
+    const n = g.names.length; const me = g.me;
+    if (!G.built) {
+      const host = $('opponents'); host.innerHTML = '';
+      for (let k = 1; k < n; k++) {
+        const idx = me >= 0 ? (me + k) % n : k - 1;
+        const box = el('div', 'opp');
+        const fan = el('div', 'fan');
+        const pill = el('div', 'seat-pill');
+        const ring = el('div', 'ava-ring');
+        ring.append(avatar(g.names[idx]));
+        const txt = el('div', 'txt');
+        const nm = el('span', 'nm'); const cnt = el('span', 'cnt');
+        txt.append(nm, cnt); pill.append(ring, txt);
+        const roleSlot = el('div', 'role-slot');
+        const bubble = el('div', 'bubble', 'пас'); bubble.hidden = true;
+        box.append(fan, pill, roleSlot, bubble);
+        host.append(box);
+        G.opps[idx] = { box, fan, ring, nm, cnt, roleSlot, bubble, shown: -1, roleKey: '' };
+      }
+      G.built = true;
+    }
+    G.opps.forEach((o, idx) => {
+      if (!o) return;
+      const p = g.players[idx]; const info = g.names[idx];
+      if (o.nm.textContent !== info.name) o.nm.textContent = info.name;
+      const cnt = p.out ? (p.place === 1 ? 'вийшов першим' : `вийшов · ${p.place}`) : cardsWord(p.cards);
+      if (o.cnt.textContent !== cnt) o.cnt.textContent = cnt;
+      const shown = Math.min(p.cards, 8);
+      if (o.shown !== shown) {
+        o.shown = shown; o.fan.innerHTML = '';
+        const mid = (shown - 1) / 2;
+        for (let j = 0; j < shown; j++) {
+          const bk = el('div', 'back');
+          bk.style.rotate = `${(j - mid) * 7}deg`;
+          bk.style.translate = `0 ${Math.abs(j - mid) * 1.6}px`;
+          o.fan.append(bk);
+        }
+      }
+      const role = roleOf(g, idx);
+      const rk = role ? role.cls + role.text : '';
+      if (o.roleKey !== rk) {
+        o.roleKey = rk; o.roleSlot.innerHTML = '';
+        if (role) o.roleSlot.append(el('span', 'role ' + role.cls, role.text));
+      }
+      const turn = g.required.includes(idx) && !g.over;
+      o.box.classList.toggle('turn', turn);
+      o.box.classList.toggle('away', !info.connected);
+      o.box.dataset.deadline = turn && g.deadline ? g.deadline : '';
+      o.bubble.hidden = !(p.passed && !p.out && !g.over);
+    });
+  }
+
+  function renderPile(g) {
+    const sig = `${g.deck}|${g.trumpCard.id}`;
+    if (G.pileSig !== sig) {
+      G.pileSig = sig;
+      const pile = $('pile'); pile.innerHTML = '';
+      pile.append(el('span', 'trump-label', 'козир'));
+      if (g.deck > 0) {
+        const tc = cardEl(g.trumpCard, g.trump); tc.classList.add('trump'); pile.append(tc);
+        if (g.deck > 1) pile.append(el('div', 'back top'));
+        pile.append(el('span', 'count', String(g.deck)));
+      } else {
+        pile.append(el('div', 'suit-badge' + (R.isRed(g.trump) ? ' red' : ''), g.trump));
+      }
+    }
+    const d = g.discard ? `Бито: ${g.discard}` : '';
+    if ($('discard').textContent !== d) $('discard').textContent = d;
+  }
+
+  function clearHandStyles(e) {
+    e.style.marginLeft = ''; e.style.rotate = ''; e.style.top = '';
+    e.classList.remove('ok', 'no', 'sel');
+    e.removeAttribute('tabindex'); e.removeAttribute('role');
+  }
+
+  function renderTable(g, a, b) {
+    const me = g.me; const n = g.names.length;
+    const selCard = S.sel ? g.hand.find((c) => c.id === S.sel) : null;
+    const felt = document.querySelector('.felt');
+    let tag = felt.querySelector('.taking-tag');
+    if (b.taking && !g.over) {
+      if (!tag) { tag = el('div', 'taking-tag'); felt.append(tag); }
+      tag.textContent = b.defender === me ? 'Ви берете' : `${nameOf(g, b.defender)} бере`;
+    } else if (tag) tag.remove();
+
+    const nodes = [];
+    if (!b.table.length) {
+      let hint;
+      if (g.over) hint = 'Партію завершено';
+      else if (a.throw) hint = 'Ваш хід. Торкніться карти, щоб атакувати.';
+      else hint = `${nameOf(g, b.attacker)} ${b.attacker === me ? 'ходите' : 'обирає карту'}…`;
+      let h = $('battle').querySelector('.empty-hint');
+      if (!h) h = el('div', 'empty-hint');
+      if (h.textContent !== hint) h.textContent = hint;
+      nodes.push(h);
+    }
+    b.table.forEach((p, i) => {
+      let pair = G.pairs.get(p.a.id);
+      if (!pair) { pair = el('div', 'pair'); G.pairs.set(p.a.id, pair); }
+      const ac = cardNode(p.a, g.trump);
+      clearHandStyles(ac); ac.classList.remove('def');
+      ac.dataset.pair = i; ac.dataset.by = p.aBy;
+      if (pair.firstElementChild !== ac) pair.prepend(ac);
+      let dc = null;
+      if (p.d) {
+        dc = cardNode(p.d, g.trump);
+        clearHandStyles(dc); dc.classList.add('def');
+        dc.dataset.pair = i; dc.dataset.by = p.dBy;
+        if (dc.parentElement !== pair) ac.after(dc);
+      }
+      let by = pair.querySelector('.by');
+      if (n > 2) { if (!by) { by = el('span', 'by'); pair.append(by); } by.textContent = nameOf(g, p.aBy); } else if (by) by.remove();
+
+      const canTarget = !!(selCard && a.defend && !p.d);
+      const beatsIt = canTarget && R.beats(p.a, selCard, g.trump);
+      pair.classList.toggle('target', canTarget && (beatsIt || g.cheat));
+      pair.classList.toggle('cheaty', canTarget && !beatsIt && g.cheat);
+      const accuse = g.cheat && a.accuse;
+      ac.classList.toggle('accusable', !!accuse && p.aBy !== me);
+      ac.classList.toggle('marked', S.mark === p.a.id);
+      if (dc) { dc.classList.toggle('accusable', !!accuse && p.dBy !== me); dc.classList.toggle('marked', S.mark === p.d.id); }
+      nodes.push(pair);
+    });
+    syncChildren($('battle'), nodes);
+    for (const [id, pe] of G.pairs) if (!pe.isConnected) G.pairs.delete(id);
+  }
+
+  function renderHand(g, a, b) {
+    const hand = $('hand'); const table = b.table;
+    const active = !!(a.defend || a.throw);
+    hand.classList.toggle('active', active);
+    hand.classList.toggle('cheat', !!g.cheat);
+    const unbeaten = table.filter((p) => !p.d);
+    const nodes = g.hand.map((c) => {
+      const e = cardNode(c, g.trump);
+      e.classList.remove('def', 'accusable', 'marked');
+      delete e.dataset.pair; delete e.dataset.by;
+      e.tabIndex = 0; e.setAttribute('role', 'button');
+      let ok = false;
+      if (a.defend) ok = unbeaten.some((p) => R.beats(p.a, c, g.trump)) || (a.transfer && R.canTransferCard(table, c));
+      else if (a.throw) ok = R.canThrowCard(table, c);
+      e.classList.toggle('ok', active && ok);
+      e.classList.toggle('no', active && !ok);
+      e.classList.toggle('sel', S.sel === c.id);
+      return e;
+    });
+    syncChildren(hand, nodes);
+    layoutHand();
+  }
+
+  function layoutHand() {
+    const h = $('hand'); const cards = [...h.children]; const n = cards.length;
+    if (!n) return;
+    const cw = cards[0].offsetWidth; const W = h.clientWidth - 8;
+    const step = n > 1 ? Math.min(cw * 0.94, (W - cw) / (n - 1)) : 0;
+    const mid = (n - 1) / 2;
+    const spread = Math.min(3.5, 28 / n);
+    cards.forEach((c, i) => {
+      const d = i - mid;
+      c.style.marginLeft = i ? `${step - cw}px` : '0';
+      c.style.rotate = `${(d * spread).toFixed(2)}deg`;
+      c.style.top = `${(d * d * spread * 0.22).toFixed(1)}px`;
+    });
+  }
+  addEventListener('resize', () => { if (!$('scrGame').hidden) layoutHand(); });
+
+  function animateCards(g, snap) {
+    const handBox = $('hand').getBoundingClientRect();
+    const anchor = (k) => {
+      if (k === g.me) return centerOf(handBox);
+      const o = G.opps[k];
+      return o ? centerOf(o.ring.getBoundingClientRect()) : centerOf($('battle').getBoundingClientRect());
+    };
+    for (const e of G.cards.values()) if (e.isConnected) e.getAnimations().forEach((an) => an.cancel());
+    const pileC = centerOf($('pile').getBoundingClientRect());
+    let dealt = 0;
+    for (const [id, e] of G.cards) {
+      if (!e.isConnected) continue;
+      const now = centerOf(e.getBoundingClientRect());
+      const rot = cssRot(e);
+      const prev = snap.get(id);
+      if (prev) {
+        e._fresh = false;
+        const dx = prev.c.x - now.x; const dy = prev.c.y - now.y;
+        if (Math.abs(dx) < 0.5 && Math.abs(dy) < 0.5 && prev.rot === rot) continue;
+        e.animate([{ translate: `${dx}px ${dy}px`, rotate: prev.rot }, { translate: '0px 0px', rotate: rot }],
+          { duration: MOVE_MS, easing: EASE });
+      } else if (e._fresh) {
+        e._fresh = false;
+        const inHand = !!e.closest('#hand');
+        const from = inHand ? pileC : anchor(Number(e.dataset.by));
+        const delay = inHand ? Math.min(dealt++, 8) * 40 : 0;
+        e.animate([
+          { translate: `${from.x - now.x}px ${from.y - now.y}px`, scale: 0.6, opacity: 0, rotate: rot },
+          { translate: '0px 0px', scale: 1, opacity: 1, rotate: rot },
+        ], { duration: MOVE_MS + 30, easing: EASE, delay, fill: 'backwards' });
+      }
+    }
+    // cards that left the table: beaten off, taken by an opponent, or swept up by a caught cheat
+    const lb = g.lastBout;
+    for (const [id, e] of [...G.cards]) {
+      if (e.isConnected) continue;
+      G.cards.delete(id);
+      const prev = snap.get(id);
+      if (!prev) continue;
+      let dest;
+      if (lb && lb.caught) dest = anchor(lb.caught.cheater);
+      else if (lb && lb.taken) dest = anchor(lb.defender);
+      else dest = centerOf($('discard').getBoundingClientRect());
+      flyGhost(e, prev, dest);
+    }
+  }
+
+  function flyGhost(e, prev, dest) {
+    const gh = e.cloneNode(true);
+    gh.classList.remove('sel', 'ok', 'no', 'marked', 'accusable', 'def');
+    gh.classList.add('fly');
+    gh.style.cssText = `left:${prev.c.x - prev.w / 2}px;top:${prev.c.y - prev.h / 2}px;rotate:${prev.rot}`;
+    document.body.append(gh);
+    const an = gh.animate([
+      { translate: '0px 0px', scale: 1, opacity: 1 },
+      { translate: `${dest.x - prev.c.x}px ${dest.y - prev.c.y}px`, scale: 0.4, opacity: 0 },
+    ], { duration: 320, easing: 'cubic-bezier(.45,0,.55,1)', fill: 'forwards' });
+    const done = () => gh.remove();
+    an.finished.then(done, done);
   }
 
   function roleOf(g, k) {
@@ -505,6 +668,11 @@
     if (k === b.defender) return { cls: 'def', text: b.taking ? 'бере' : 'відбивається' };
     if (k === b.attacker) return { cls: 'att', text: 'ходить' };
     return null;
+  }
+
+  function passLabel(g, b) {
+    if (b.taking) return 'Досить';
+    return b.table.length && b.table.every((p) => p.d) ? 'Бито' : 'Пас';
   }
 
   function renderStatus(g, a, b) {
@@ -525,48 +693,71 @@
       main = b.taking ? 'Підкиньте вдогонку' : 'Можна підкинути';
       const ranks = [...R.tableRanks(b.table)].sort((x, y) => x - y).map(R.rankLabel).join(', ');
       sub = `Номінали на столі: ${ranks}. Або «${passLabel(g, b)}».`;
+    } else if (g.required.includes(me)) {
+      main = b.table.every((p) => p.d) && !b.taking ? 'Відбито' : 'Ваше рішення';
+      sub = `Натисніть «${passLabel(g, b)}», коли будете готові`;
     } else if (others.length) {
       main = others.length === 1 ? `Чекаємо: ${nameOf(g, others[0])}` : 'Чекаємо на інших гравців';
       if (b.taking) sub = `${nameOf(g, b.defender)} бере карти`;
-    } else if (g.required.includes(me)) {
-      main = 'Ваше рішення'; sub = `Натисніть «${passLabel(g, b)}», якщо нічого підкидати`;
     }
+    const sig = main + '|' + sub;
+    if (G.statusSig === sig) return;
+    G.statusSig = sig;
     const st = $('status'); st.innerHTML = '';
     st.append(main);
     if (sub) st.append(el('small', null, sub));
   }
 
-  function passLabel(g, b) {
-    if (b.taking) return 'Досить';
-    return b.table.length && b.table.every((p) => p.d) ? 'Бито' : 'Пас';
+  function renderActions(g, a, b) {
+    const list = [];
+    const add = (text, cls, fn) => list.push({ text, cls, fn });
+    const selCard = S.sel ? g.hand.find((c) => c.id === S.sel) : null;
+    if (!g.over) {
+      if (S.mark) {
+        add('Скасувати', 'ghost', () => { S.mark = null; renderGame(S.room); });
+        add('Викрити!', 'danger', () => act({ type: 'accuse', card: S.mark }));
+      } else {
+        if (selCard && a.transfer && (R.canTransferCard(b.table, selCard) || g.cheat)) {
+          const honest = R.canTransferCard(b.table, selCard);
+          add(honest ? 'Перевести' : 'Перевести (нечесно)', honest ? '' : 'cheat', () => act({ type: 'transfer', card: selCard.id }));
+        }
+        if (selCard && a.throw && !R.canThrowCard(b.table, selCard) && g.cheat) {
+          add('Підкинути нечесно', 'cheat', () => act({ type: 'throw', card: selCard.id }));
+        }
+        if (a.take) add('Беру', 'ghost', () => act({ type: 'take' }));
+        if (a.pass && (g.required.includes(g.me) || g.throwMode === 'free')) add(passLabel(g, b), '', () => act({ type: 'pass' }));
+      }
+    }
+    const box = $('actions');
+    const sig = list.map((x) => x.text + x.cls).join('|');
+    if (sig !== G.actSig) {
+      G.actSig = sig; box.innerHTML = '';
+      for (const x of list) { const btn = el('button', 'btn ' + x.cls, x.text); btn.type = 'button'; box.append(btn); }
+    }
+    [...box.children].forEach((btn, i) => { btn.onclick = list[i] ? list[i].fn : null; });
   }
 
-  function renderActions(g, a, b, selCard) {
-    const box = $('actions'); box.innerHTML = '';
-    const btn = (text, cls, fn) => { const x = el('button', 'btn ' + cls, text); x.type = 'button'; x.addEventListener('click', fn); box.append(x); };
-    if (g.over) return;
-    if (S.mark) {
-      btn('Скасувати', 'ghost', () => { S.mark = null; renderGame(S.room); });
-      btn('Викрити!', 'danger', () => act({ type: 'accuse', card: S.mark }));
-      return;
-    }
-    if (selCard) {
-      if (a.transfer && (R.canTransferCard(b.table, selCard) || g.cheat)) {
-        const honest = R.canTransferCard(b.table, selCard);
-        btn(honest ? 'Перевести' : 'Перевести (нечесно)', honest ? '' : 'cheat', () => act({ type: 'transfer', card: selCard.id }));
-      }
-      if (a.throw && !R.canThrowCard(b.table, selCard) && g.cheat) {
-        btn('Підкинути нечесно', 'cheat', () => act({ type: 'throw', card: selCard.id }));
+  function renderMe(g) {
+    const me = g.me;
+    const ml = $('meLine');
+    const role = me >= 0 ? roleOf(g, me) : null;
+    const sig = me >= 0 ? `${g.hand.length}|${role ? role.text : ''}` : '';
+    if (ml.dataset.sig !== sig) {
+      ml.dataset.sig = sig; ml.innerHTML = '';
+      if (me >= 0) {
+        ml.append(el('span', null, `Ви · ${cardsWord(g.hand.length)}`));
+        if (role) ml.append(el('span', 'role ' + role.cls, role.text));
       }
     }
-    if (a.take) btn('Беру', 'ghost', () => act({ type: 'take' }));
-    if (a.pass && (g.required.includes(g.me) || g.throwMode === 'free')) btn(passLabel(g, b), '', () => act({ type: 'pass' }));
+    const t = $('myTimer');
+    const mine = g.required.includes(me) && !!g.deadline && !g.over;
+    t.classList.toggle('on', mine);
+    t.dataset.deadline = mine ? g.deadline : '';
   }
 
   async function act(action) {
     const r = await emit('act', action);
-    if (r.ok) { S.sel = null; S.mark = null; }
-    else if (S.room) renderGame(S.room);
+    if (r.ok) { S.sel = null; S.mark = null; } else if (S.room) renderGame(S.room);
   }
 
   function onHandCard(id) {
@@ -615,16 +806,6 @@
   });
   $('battle').addEventListener('click', (e) => { const c = e.target.closest('.card'); if (c) onTableCard(c); });
 
-  function layoutHand() {
-    const h = $('hand'); const cards = [...h.children]; const n = cards.length;
-    if (!n) return;
-    const cw = cards[0].getBoundingClientRect().width;
-    const W = h.clientWidth;
-    const gap = n > 1 ? Math.min(cw * 0.06, (W - cw) / (n - 1) - cw) : 0;
-    cards.forEach((c, i) => { c.style.marginLeft = i ? `${gap}px` : '0'; });
-  }
-  addEventListener('resize', () => { if (!$('scrGame').hidden) layoutHand(); });
-
   function eventText(g, ev) {
     const me = g.me; const nm = (k) => nameOf(g, k);
     switch (ev.type) {
@@ -643,17 +824,23 @@
     }
   }
 
-  /* timers */
+  /* turn timers: ring around the avatar for opponents, a bar for you */
   setInterval(() => {
     const now = Date.now() + S.clockOffset;
-    document.querySelectorAll('[data-deadline]').forEach((t) => {
-      const d = Number(t.dataset.deadline);
-      const bar = t.querySelector('i');
-      if (!d || !bar) return;
+    for (const o of G.opps) {
+      if (!o) continue;
+      const d = Number(o.box.dataset.deadline);
+      if (!d) continue;
       const left = Math.max(0, d - now);
-      bar.style.transform = `scaleX(${Math.min(1, left / 30000)})`;
+      o.ring.style.setProperty('--p', Math.min(1, left / 30000).toFixed(3));
+      o.box.classList.toggle('low', left < 8000);
+    }
+    const t = $('myTimer'); const d = Number(t.dataset.deadline);
+    if (d) {
+      const left = Math.max(0, d - now);
+      t.firstElementChild.style.transform = `scaleX(${Math.min(1, left / 30000)})`;
       t.classList.toggle('low', left < 8000);
-    });
+    }
   }, 200);
 
   /* ---------------- result ---------------- */
