@@ -1,0 +1,21 @@
+{
+  "name": "kozyr-online",
+  "version": "1.0.0",
+  "description": "Онлайн-гра в дурака: підкидний і переводний, до 4 гравців, боти, вхід через Google",
+  "private": true,
+  "main": "server/index.js",
+  "scripts": {
+    "start": "node server/index.js",
+    "dev": "node --watch server/index.js",
+    "test": "node --test"
+  },
+  "engines": {
+    "node": ">=20"
+  },
+  "license": "MIT",
+  "dependencies": {
+    "express": "^4.22.3",
+    "google-auth-library": "^9.15.1",
+    "socket.io": "^4.8.4"
+  }
+}

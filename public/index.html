@@ -1,0 +1,187 @@
+<!doctype html>
+<html lang="uk">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Козир — дурень онлайн</title>
+<meta name="description" content="Онлайн-гра в дурака: підкидний і переводний, до 4 гравців, боти, махлювання з викриттям.">
+<meta name="theme-color" content="#0e2326">
+<link rel="icon" href="/favicon.svg" type="image/svg+xml">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Unbounded:wght@500;700;800&family=Golos+Text:wght@400;500;600&display=swap">
+<link rel="stylesheet" href="/app.css">
+</head>
+<body>
+<div id="app">
+
+  <!-- ===== LOGIN ===== -->
+  <section class="screen login" id="scrLogin" hidden>
+    <div class="login-card">
+      <div class="brand-big"><span class="brand-mark">♠</span>Козир</div>
+      <p class="lead">Дурень онлайн. Підкидний і переводний, з друзями або з ботами, до чотирьох гравців.</p>
+      <div class="fan-deco" aria-hidden="true">
+        <div class="mini-card">Т<i>♥</i></div><div class="mini-card dark">К<i>♠</i></div><div class="mini-card">Д<i>♦</i></div><div class="mini-card dark">В<i>♣</i></div>
+      </div>
+      <div id="googleBtn" class="google-slot"></div>
+      <p class="muted small" id="googleMissing" hidden>Вхід через Google ще не налаштовано на сервері.</p>
+      <form id="guestForm" class="guest" hidden>
+        <div class="divider"><span>або</span></div>
+        <label for="guestName" class="label">Грати як гість</label>
+        <div class="row">
+          <input id="guestName" maxlength="24" placeholder="Ваше ім'я" autocomplete="nickname">
+          <button class="btn" type="submit">Увійти</button>
+        </div>
+      </form>
+      <p class="error" id="loginError" hidden></p>
+      <p class="muted small"><a class="link-btn" href="/privacy">Конфіденційність</a> · <a class="link-btn" href="/terms">Умови</a></p>
+    </div>
+  </section>
+
+  <!-- ===== HOME ===== -->
+  <section class="screen home" id="scrHome" hidden>
+    <header class="topbar">
+      <div class="brand"><span class="brand-mark">♠</span>Козир</div>
+      <div class="me-chip" id="meChip"></div>
+      <button class="icon-btn" id="logoutBtn" title="Вийти з акаунта">Вийти</button>
+    </header>
+    <div class="home-body">
+      <h1 class="hello" id="hello">Привіт!</h1>
+      <div class="mode-grid">
+        <button class="mode-card" id="playBots">
+          <span class="mode-suit">♣</span>
+          <span class="mode-title">З ботами</span>
+          <span class="mode-sub">Від 1 до 3 суперників, три рівні складності</span>
+        </button>
+        <button class="mode-card accent" id="playFriends">
+          <span class="mode-suit">♥</span>
+          <span class="mode-title">З друзями</span>
+          <span class="mode-sub">Кімната з посиланням-запрошенням, можна додати ботів</span>
+        </button>
+      </div>
+      <form class="join" id="joinForm">
+        <label class="label" for="joinCode">Є код кімнати?</label>
+        <div class="row">
+          <input id="joinCode" maxlength="5" placeholder="Напр. K7QRT" autocomplete="off" autocapitalize="characters">
+          <button class="btn ghost" type="submit">Приєднатись</button>
+        </div>
+      </form>
+      <button class="link-btn" id="rulesBtn">Правила гри</button>
+    </div>
+  </section>
+
+  <!-- ===== SETUP SHEET ===== -->
+  <div class="sheet" id="setup" hidden>
+    <div class="panel">
+      <h2 id="setupTitle">Нова гра</h2>
+      <div class="settings" id="setupFields"></div>
+      <div class="row end">
+        <button class="btn ghost" id="setupCancel" type="button">Скасувати</button>
+        <button class="btn" id="setupGo" type="button">Почати</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- ===== LOBBY ===== -->
+  <section class="screen lobby" id="scrLobby" hidden>
+    <header class="topbar">
+      <button class="icon-btn" id="lobbyLeave">← Вийти</button>
+      <div class="brand small"><span class="brand-mark">♠</span>Кімната</div>
+    </header>
+    <div class="lobby-body">
+      <div class="code-block">
+        <div class="label">Код кімнати</div>
+        <div class="code" id="roomCode">-----</div>
+        <div class="row center">
+          <button class="btn" id="copyLink">Скопіювати запрошення</button>
+        </div>
+        <input class="link-field" id="linkField" readonly aria-label="Посилання-запрошення">
+      </div>
+      <div class="seats" id="seats"></div>
+      <div class="lobby-settings">
+        <div class="label">Правила</div>
+        <div class="settings" id="lobbyFields"></div>
+      </div>
+      <div class="lobby-foot">
+        <p class="muted" id="lobbyHint"></p>
+        <button class="btn big" id="startBtn">Почати гру</button>
+      </div>
+    </div>
+  </section>
+
+  <!-- ===== GAME ===== -->
+  <section class="screen game" id="scrGame" hidden>
+    <header class="topbar slim">
+      <button class="icon-btn" id="gameLeave" title="Вийти з гри">←</button>
+      <div class="rules-chip" id="rulesChip"></div>
+      <button class="icon-btn" id="gameRules" title="Правила">?</button>
+    </header>
+    <div class="opponents" id="opponents"></div>
+    <div class="felt">
+      <div class="pile" id="pile"></div>
+      <div class="battle" id="battle"></div>
+      <div class="discard" id="discard"></div>
+    </div>
+    <div class="controls">
+      <div class="status" id="status"></div>
+      <div class="actions" id="actions"></div>
+    </div>
+    <div class="me-zone">
+      <div class="timer" id="myTimer"><i></i></div>
+      <div class="hand" id="hand"></div>
+      <div class="me-line" id="meLine"></div>
+    </div>
+  </section>
+
+  <!-- ===== RESULT ===== -->
+  <div class="sheet" id="result" hidden>
+    <div class="panel">
+      <div class="result-suit" id="resSuit">♠</div>
+      <h2 id="resTitle"></h2>
+      <ol class="places" id="resPlaces"></ol>
+      <div class="row end">
+        <button class="btn ghost" id="resLeave">У меню</button>
+        <button class="btn" id="resAgain">Ще партію</button>
+      </div>
+      <p class="muted small" id="resWait" hidden>Чекаємо, поки господар кімнати почне нову партію…</p>
+    </div>
+  </div>
+
+  <!-- ===== CONFIRM ===== -->
+  <div class="sheet" id="confirm" hidden>
+    <div class="panel narrow">
+      <h2 id="confirmTitle">Вийти з гри?</h2>
+      <p class="muted" id="confirmText">Ваше місце займе бот.</p>
+      <div class="row end">
+        <button class="btn ghost" id="confirmNo">Залишитись</button>
+        <button class="btn danger" id="confirmYes">Вийти</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- ===== RULES ===== -->
+  <div class="sheet" id="rules" hidden>
+    <div class="panel">
+      <h2>Як грати</h2>
+      <ul class="rules-list">
+        <li>Колода на <b>36 карт</b>, кожному по 6. Нижня карта колоди визначає <b>козир</b>. Першим ходить той, у кого найменший козир.</li>
+        <li><b>Атака:</b> торкніться карти. Підкидати можна лише карти номіналів, що вже лежать на столі, і не більше, ніж карт у того, хто відбивається (максимум 6).</li>
+        <li><b>Захист:</b> оберіть карту, а потім карту на столі, яку б'єте. Бити можна старшою картою тієї ж масті або будь-яким козирем.</li>
+        <li><b>Переводний:</b> поки нічого не побито, можна покласти карту того самого номіналу й перевести атаку на наступного гравця.</li>
+        <li><b>По черзі:</b> спершу підкидає той, хто ходив, а після його «Пас» — інші за годинниковою стрілкою. <b>Хто встиг:</b> підкидають усі одночасно.</li>
+        <li><b>Махлювання:</b> можна покласти неправильну карту. Якщо хтось помітить і натисне «Викрити», шахрай забирає всі карти зі столу. Помилкове звинувачення коштує штрафної карти. Викривати можна раз за відбій.</li>
+        <li>На хід є 30 секунд, далі гра зробить найпростіший хід за вас. Дурень — той, хто залишився з картами останнім.</li>
+      </ul>
+      <div class="row end"><button class="btn" id="rulesClose">Зрозуміло</button></div>
+    </div>
+  </div>
+
+  <div class="toasts" id="toasts" aria-live="polite"></div>
+  <div class="conn" id="conn" hidden>З'єднання втрачено. Підключаємось знову…</div>
+</div>
+
+<script src="/socket.io/socket.io.js"></script>
+<script src="/rules.js"></script>
+<script src="/app.js"></script>
+</body>
+</html>
