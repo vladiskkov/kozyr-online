@@ -30,6 +30,7 @@
     return many;
   }
   const cardsWord = (n) => `${n} ${plural(n, 'карта', 'карти', 'карт')}`;
+  const cardsAcc = (n) => `${n} ${plural(n, 'карту', 'карти', 'карт')}`; // «забирає 1 карту»
   function el(tag, cls, text) {
     const e = document.createElement(tag);
     if (cls) e.className = cls;
@@ -58,6 +59,7 @@
     if (p && p.avatar) {
       const img = document.createElement('img');
       img.src = p.avatar; img.alt = ''; img.referrerPolicy = 'no-referrer';
+      img.onerror = () => { img.remove(); a.textContent = ((p && p.name) || '?').trim().charAt(0).toUpperCase(); };
       a.appendChild(img);
     } else {
       a.textContent = ((p && p.name) || '?').trim().charAt(0).toUpperCase();
@@ -158,6 +160,7 @@
     $('hello').textContent = `Привіт, ${S.user.name}!`;
     connect();
     const m = location.pathname.match(/^\/r\/([A-Za-z0-9]{5})$/);
+    refreshMine();
     if (m) { S.code = m[1].toUpperCase(); if (S.socket.connected) join(S.code); } else show('scrHome');
   }
 
@@ -200,6 +203,8 @@
     $('result').hidden = true; $('confirm').hidden = true;
     setPath('/');
     show('scrHome');
+    $('toasts').innerHTML = '';
+    refreshMine();
   }
 
   async function leaveRoom() {
@@ -301,7 +306,7 @@
   /* ---------------- lobby ---------------- */
   let lobbySig = '';
   function renderLobby(v) {
-    const sig = JSON.stringify([v.code, v.status, v.isHost, v.settings, v.seats]);
+    const sig = JSON.stringify([v.code, v.status, v.isHost, v.settings, v.seats, v.board]);
     if (sig === lobbySig && !$('scrLobby').hidden) return;
     lobbySig = sig;
     $('roomCode').textContent = v.code;
@@ -342,6 +347,8 @@
     renderSettings($('lobbyFields'), v.settings, {
       kind: 'friends', editable: v.isHost, onChange: (st) => emit('settings', st),
     });
+    $('lobbyBoard').hidden = !(v.board && v.board.length);
+    if (v.board && v.board.length) renderBoardList($('lobbyBoardList'), v.board);
     const filled = v.seats.filter(Boolean).length;
     $('startBtn').hidden = !v.isHost;
     $('startBtn').disabled = filled < 2;
@@ -415,6 +422,8 @@
     if (n > 2) bits.push(THROW[g.throwMode]);
     if (g.cheat) bits.push('махлювання');
     $('rulesChip').textContent = bits.join(' · ');
+    const mineRow = (v.board || []).find((r) => r.you);
+    $('myPts').textContent = mineRow ? signed(mineRow.points).replace('+', '') : '0';
 
     renderOpponents(g);
     renderPile(g);
@@ -859,12 +868,12 @@
     switch (ev.type) {
       case 'start': return { text: `Козир ${ev.trump}. Першим ходить: ${nm(ev.by)}${ev.lowTrump ? ` (найменший козир ${R.rankLabel(ev.lowTrump)})` : ''}` };
       case 'transfer': return { text: ev.by === me ? `Ви переводите на ${nm(ev.to)}` : `${nm(ev.by)} переводить на ${ev.to === me ? 'вас' : nm(ev.to)}` };
-      case 'took': return { text: ev.by === me ? `Ви забираєте ${cardsWord(ev.count)}` : `${nm(ev.by)} забирає ${cardsWord(ev.count)}` };
+      case 'took': return { text: ev.by === me ? `Ви забираєте ${cardsAcc(ev.count)}` : `${nm(ev.by)} забирає ${cardsAcc(ev.count)}` };
       case 'out': return { text: ev.by === me ? 'Ви вийшли з гри!' : `${nm(ev.by)} виходить з гри` };
       case 'caught':
-        if (ev.by === me) return { text: `Викрито! ${nm(ev.cheater)} махлював(ла) і забирає ${cardsWord(ev.count)}`, kind: 'cheat' };
-        if (ev.cheater === me) return { text: `${nm(ev.by)} вас викрив(ла)! Ви забираєте ${cardsWord(ev.count)}`, kind: 'alarm' };
-        return { text: `${nm(ev.by)} викриває ${nm(ev.cheater)}! Шахрай забирає ${cardsWord(ev.count)}`, kind: 'cheat' };
+        if (ev.by === me) return { text: `Викрито! ${nm(ev.cheater)} махлював(ла) і забирає ${cardsAcc(ev.count)}`, kind: 'cheat' };
+        if (ev.cheater === me) return { text: `${nm(ev.by)} вас викрив(ла)! Ви забираєте ${cardsAcc(ev.count)}`, kind: 'alarm' };
+        return { text: `${nm(ev.by)} викриває ${nm(ev.cheater)}! Шахрай забирає ${cardsAcc(ev.count)}`, kind: 'cheat' };
       case 'falseAccuse':
         if (ev.by === me) return { text: `${nm(ev.accused)} грав(ла) чесно. ${ev.penalty ? 'Ви берете штрафну карту з колоди' : 'Колода порожня, тож до кінця партії ви не можете викривати'}`, kind: 'alarm' };
         return { text: `${nm(ev.by)} помилково звинувачує ${ev.accused === me ? 'вас' : nm(ev.accused)} і ${ev.penalty ? 'бере штрафну карту' : 'втрачає право викривати'}`, kind: 'cheat' };
@@ -903,6 +912,63 @@
     barLowT = setTimeout(() => t.classList.add('low'), Math.max(0, left - 8000));
   }
 
+  /* ---------------- scores ---------------- */
+  const signed = (n) => (n > 0 ? `+${n}` : n < 0 ? `−${Math.abs(n)}` : '0');
+  const ptsWord = (n) => plural(Math.abs(n), 'очко', 'очки', 'очок');
+
+  function lbRow(r, rank) {
+    const row = el('div', 'lb-row' + (r.you ? ' you' : '') + (rank === 1 ? ' top1' : ''));
+    row.append(el('span', 'rk', rank != null ? String(rank) : '·'), avatar(r));
+    const who = el('div', 'who');
+    who.append(el('b', null, r.name + (r.you ? ' (ви)' : '')));
+    who.append(el('span', null, `ігор ${r.games} · перемог ${r.wins} · дурнем ${r.duraks}`));
+    row.append(who, el('span', 'pts' + (r.points < 0 ? ' neg' : ''), String(r.points)));
+    return row;
+  }
+
+  function renderBoardList(box, board) {
+    box.innerHTML = '';
+    if (!board.length) { box.append(el('p', 'muted', 'Ще не зіграно жодної партії.')); return; }
+    let prev = null; let rank = 0;
+    board.forEach((r, i) => { rank = prev && prev.points === r.points ? rank : i + 1; prev = r; box.append(lbRow(r, rank)); });
+  }
+
+  async function openLeaders() {
+    $('leaders').hidden = false;
+    const box = $('lbList'); box.innerHTML = '';
+    box.append(el('p', 'muted', 'Завантажуємо…'));
+    try { renderLeaders(await api('/api/leaderboard')); } catch (e) { box.innerHTML = ''; box.append(el('p', 'error', e.message)); }
+  }
+
+  function renderLeaders(d) {
+    const box = $('lbList'); box.innerHTML = '';
+    if (!d.top.length) box.append(el('p', 'muted', 'Поки порожньо. Зіграйте партію — і будете першим!'));
+    d.top.forEach((r) => box.append(lbRow(r, r.rank)));
+    if (d.me && !d.top.some((r) => r.you)) { box.append(el('div', 'lb-gap', '• • •')); box.append(lbRow(d.me, d.me.rank)); }
+    const msgs = [];
+    if (d.guest) msgs.push('Ви граєте як гість, тому вас немає в загальній таблиці. Увійдіть через Google, щоб очки рахувалися.');
+    if (!d.persistent) msgs.push('Поки рейтинг зберігається лише до перезапуску сервера.');
+    $('lbNote').textContent = msgs.join(' ');
+    $('lbNote').hidden = !msgs.length;
+    updateMine(d);
+  }
+
+  function updateMine(d) {
+    const m = $('lbMine');
+    if (d.me) m.textContent = `Ви #${d.me.rank} · ${d.me.points} ${ptsWord(d.me.points)}`;
+    else if (d.guest) m.textContent = 'Гості не потрапляють у рейтинг';
+    else m.textContent = 'Зіграйте партію, щоб потрапити в рейтинг';
+  }
+  async function refreshMine() { try { updateMine(await api('/api/leaderboard')); } catch { /* offline is fine */ } }
+
+  $('lbBtn').addEventListener('click', openLeaders);
+  $('gameBoard').addEventListener('click', () => {
+    if (!S.room) return;
+    renderBoardList($('boardList'), S.room.board || []);
+    $('board').hidden = false;
+  });
+  document.querySelectorAll('[data-close]').forEach((b) => b.addEventListener('click', () => { $(b.dataset.close).hidden = true; }));
+
   /* ---------------- result ---------------- */
   function showResult(v) {
     if (!v || !v.game || !v.game.over) return;
@@ -914,18 +980,32 @@
     $('resSuit').textContent = suit;
     $('resSuit').style.color = R.isRed(suit) ? 'var(--red)' : 'var(--text)';
     const list = $('resPlaces'); list.innerHTML = '';
-    const order = g.players.map((p, i) => ({ ...p, i })).sort((x, y) => (x.place || 99) - (y.place || 99));
-    for (const p of order) {
-      const li = el('li', p.i === g.loser ? 'durak' : '');
-      const info = g.names[p.i];
-      li.append(el('b', null, p.i === me ? `${info.name} (ви)` : info.name));
-      li.append(` — ${p.i === g.loser ? 'дурень' : (p.place === 1 ? 'вийшов першим' : 'вийшов')}`);
-      if (info.durak) li.append(` · дурнем ${info.durak} ${plural(info.durak, 'раз', 'рази', 'разів')}`);
+    const rows = (v.lastScores && v.lastScores.rows) || [];
+    const rank = (r) => (r.left ? 3 : r.durak ? 2 : r.place ? 0 : 1);
+    const sorted = rows.slice().sort((a, b) => rank(a) - rank(b) || (a.place || 99) - (b.place || 99));
+    for (const r of sorted) {
+      const li = el('li', r.durak ? 'durak' : '');
+      li.append(el('b', null, r.you ? `${r.name} (ви)` : r.name));
+      li.append(` — ${r.left ? 'покинув партію' : r.durak ? 'дурень' : r.place === 1 ? 'вийшов першим' : r.place ? `вийшов ${r.place}-м` : 'нічия'}`);
+      const extra = [];
+      if (r.caught) extra.push(`викрив +${r.caught}`);
+      if (r.wasCaught) extra.push(`попався −${r.wasCaught}`);
+      if (extra.length) li.append(` (${extra.join(', ')})`);
+      li.append(el('span', 'delta ' + (r.points > 0 ? 'pos' : r.points < 0 ? 'neg' : 'zero'), signed(r.points)));
       list.append(li);
     }
+    const rb = $('resBoard'); rb.innerHTML = '';
+    if (v.lastScores && v.lastScores.mult !== 1) rb.append(el('p', 'muted small', `Множник за ботів у цій партії: ×${String(v.lastScores.mult).replace('.', ',')}`));
+    if ((v.board || []).length && v.games > 1) {
+      rb.append(el('div', 'label', 'Рахунок кімнати'));
+      const lst = el('div', 'lb-list'); renderBoardList(lst, v.board); rb.append(lst);
+    }
+    const mine = rows.find((r) => r.you);
+    if (mine && !mine.ranked) rb.append(el('p', 'muted small', 'Ви граєте як гість, тому ці очки не йдуть у загальний рейтинг.'));
     $('resAgain').hidden = !v.isHost;
     $('resWait').hidden = v.isHost;
     $('resLeave').textContent = v.solo ? 'У меню' : 'До кімнати';
+    $('toasts').innerHTML = '';
     $('result').hidden = false;
   }
   $('resAgain').addEventListener('click', () => { $('result').hidden = true; emit('start'); });
@@ -948,7 +1028,7 @@
   $('rulesBtn').addEventListener('click', openRules);
   $('gameRules').addEventListener('click', openRules);
   $('rulesClose').addEventListener('click', () => { $('rules').hidden = true; });
-  for (const id of ['rules', 'setup', 'confirm']) $(id).addEventListener('click', (e) => { if (e.target.id === id) $(id).hidden = true; });
+  for (const id of ['rules', 'setup', 'confirm', 'leaders', 'board']) $(id).addEventListener('click', (e) => { if (e.target.id === id) $(id).hidden = true; });
 
   boot();
 })();

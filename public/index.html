@@ -66,6 +66,11 @@
           <button class="btn ghost" type="submit">Приєднатись</button>
         </div>
       </form>
+      <button class="lb-card" id="lbBtn" type="button">
+        <span class="lb-icon" aria-hidden="true">★</span>
+        <span class="lb-txt"><b>Таблиця лідерів</b><span id="lbMine">Загальний рейтинг усіх гравців</span></span>
+        <span class="lb-go" aria-hidden="true">→</span>
+      </button>
       <button class="link-btn" id="rulesBtn">Правила гри</button>
     </div>
   </section>
@@ -98,6 +103,10 @@
         <input class="link-field" id="linkField" readonly aria-label="Посилання-запрошення">
       </div>
       <div class="seats" id="seats"></div>
+      <div class="room-board" id="lobbyBoard" hidden>
+        <div class="label">Рахунок кімнати</div>
+        <div class="lb-list" id="lobbyBoardList"></div>
+      </div>
       <div class="lobby-settings">
         <div class="label">Правила</div>
         <div class="settings" id="lobbyFields"></div>
@@ -114,6 +123,7 @@
     <header class="topbar slim">
       <button class="icon-btn" id="gameLeave" title="Вийти з гри">←</button>
       <div class="rules-chip" id="rulesChip"></div>
+      <button class="icon-btn score-btn" id="gameBoard" title="Рахунок кімнати"><span aria-hidden="true">★</span> <span id="myPts">0</span></button>
       <button class="icon-btn" id="gameRules" title="Правила">?</button>
     </header>
     <div class="opponents" id="opponents"></div>
@@ -139,6 +149,7 @@
       <div class="result-suit" id="resSuit">♠</div>
       <h2 id="resTitle"></h2>
       <ol class="places" id="resPlaces"></ol>
+      <div class="res-board" id="resBoard"></div>
       <div class="row end">
         <button class="btn ghost" id="resLeave">У меню</button>
         <button class="btn" id="resAgain">Ще партію</button>
@@ -170,9 +181,38 @@
         <li><b>Переводний:</b> поки нічого не побито, можна покласти карту того самого номіналу й перевести атаку на наступного гравця.</li>
         <li><b>По черзі:</b> спершу підкидає той, хто ходив, а після його «Пас» — інші за годинниковою стрілкою. <b>Хто встиг:</b> підкидають усі одночасно.</li>
         <li><b>Махлювання:</b> можна покласти неправильну карту. Якщо хтось помітить і натисне «Викрити», шахрай забирає всі карти зі столу. Помилкове звинувачення коштує штрафної карти з колоди, а коли колода порожня — права викривати до кінця партії. Побиті карти в гру ніколи не повертаються. Викривати можна раз за відбій.</li>
+        <li><b>Очки:</b> вийти першим — по 2 за кожного суперника позаду, дурень −2; з ботами множник ×½ / ×1 / ×1½ за найслабшого; викрити шахрая +1, попастися −1; покинути партію −2.</li>
         <li>На хід є 30 секунд, далі гра зробить найпростіший хід за вас. Дурень — той, хто залишився з картами останнім.</li>
       </ul>
       <div class="row end"><button class="btn" id="rulesClose">Зрозуміло</button></div>
+    </div>
+  </div>
+
+  <!-- ===== LEADERBOARD ===== -->
+  <div class="sheet" id="leaders" hidden>
+    <div class="panel">
+      <div class="panel-head"><h2>Таблиця лідерів</h2><button class="icon-btn" type="button" data-close="leaders">Закрити</button></div>
+      <div class="lb-list" id="lbList"><p class="muted">Завантажуємо…</p></div>
+      <p class="muted small" id="lbNote" hidden></p>
+      <details class="scoring"><summary>Як нараховуються очки</summary>
+        <ul class="rules-list">
+          <li><b>Вийти першим</b> — по 2 очки за кожного суперника, який лишився позаду: удвох +2; утрьох +4 і +2; учотирьох +6, +4 і +2.</li>
+          <li><b>Дурень</b> — −2.</li>
+          <li><b>Гра з ботами</b> — очки множаться за найслабшого бота: легкий ×½, середній ×1, складний ×1½.</li>
+          <li><b>Викрити шахрая</b> +1, <b>попастися на махлюванні</b> −1.</li>
+          <li><b>Вийти з партії до кінця</b> — −2.</li>
+          <li>У загальну таблицю потрапляють лише ті, хто увійшов через Google.</li>
+        </ul>
+      </details>
+    </div>
+  </div>
+
+  <!-- ===== ROOM BOARD ===== -->
+  <div class="sheet" id="board" hidden>
+    <div class="panel">
+      <div class="panel-head"><h2>Рахунок кімнати</h2><button class="icon-btn" type="button" data-close="board">Закрити</button></div>
+      <div class="lb-list" id="boardList"></div>
+      <p class="muted small">Рахунок кімнати ведеться, поки існує кімната. Загальний рейтинг — на головному екрані.</p>
     </div>
   </div>
 

@@ -2,6 +2,9 @@
 const crypto = require('crypto');
 const { Game } = require('./game.js');
 const Bots = require('./bots.js');
+const { scoreGame } = require('./scores.js');
+
+const isRanked = (id) => typeof id === 'string' && id.startsWith('g_'); // Google accounts only
 
 const TURN_MS = 30000;
 const TURN_MS_AWAY = 8000;
@@ -40,7 +43,9 @@ class Room {
     this.botTimer = null;
     this.turnTimer = null;
     this.deadline = null;
-    this.tally = {}; // seat key -> times durak
+    this.board = new Map(); // seat id -> room score row
+    this.lastScores = null; // rows of the last finished game
+    this.leavers = new Map(); // humans who left the current game
     this.games = 0;
     this.touched = Date.now();
     if (solo) {
@@ -95,6 +100,10 @@ class Room {
     if (this.status === 'playing' && this.game && !this.game.over) {
       // a bot takes over the seat so the others can finish
       const gi = this.gameIndexOf(userId);
+      const leaver = { ...this.seats[seat] };
+      this.leavers.set(userId, leaver);
+      // if this empties the room the game never finishes, so book the penalty now
+      if (!this.seats.some((x, k) => k !== seat && x && x.kind === 'human')) this._recordGlobal([{ ...leaver, kind: 'human', points: -2, place: null, durak: false, caught: 0 }]);
       const bot = this._bot('medium');
       bot.name = `${bot.name} (замість ${this.seats[seat].name})`;
       this.seats[seat] = bot;
@@ -162,6 +171,8 @@ class Room {
       variant: this.settings.variant, throwMode: this.settings.throwMode, cheat: this.settings.cheat,
     });
     this.status = 'playing';
+    this.leavers = new Map();
+    this.lastScores = null;
     this.games++;
     this._schedule();
     this.broadcast();
@@ -189,11 +200,28 @@ class Room {
     clearTimeout(this.botTimer); clearTimeout(this.turnTimer);
     this.deadline = null;
     this.status = 'finished';
-    const l = this.game.loser;
-    if (l !== null && l >= 0) {
-      const key = this.gameSeats[l].id;
-      this.tally[key] = (this.tally[key] || 0) + 1;
+    const { mult, rows } = scoreGame(this.game, this.gameSeats, this.leavers);
+    this.lastScores = { mult, rows };
+    for (const r of rows) {
+      const b = this.board.get(r.id) || { id: r.id, kind: r.kind, name: r.name, avatar: r.avatar, points: 0, games: 0, wins: 0, duraks: 0 };
+      b.name = r.name; b.avatar = r.avatar;
+      b.points += r.points; b.games += 1; b.wins += r.place === 1 ? 1 : 0; b.duraks += r.durak ? 1 : 0;
+      this.board.set(r.id, b);
     }
+    // humans whose seat was taken over by a bot don't get the bot's result
+    this._recordGlobal(rows.filter((r) => r.kind === 'human' && (r.left || !this.leavers.has(r.id))));
+  }
+
+  _recordGlobal(rows) {
+    const ranked = rows.filter((r) => isRanked(r.id));
+    if (!ranked.length || !this.manager.store) return;
+    this.manager.store.record(ranked).catch((e) => console.error('[db] record failed', e.message));
+  }
+
+  boardView(userId) {
+    return [...this.board.values()]
+      .sort((a, b) => b.points - a.points || a.games - b.games)
+      .map((b) => ({ name: b.name, avatar: b.avatar, kind: b.kind, points: b.points, games: b.games, wins: b.wins, duraks: b.duraks, you: b.id === userId, ranked: isRanked(b.id) }));
   }
 
   _schedule() {
@@ -254,7 +282,8 @@ class Room {
     const seatView = (s) => s && ({
       kind: s.kind, name: s.name, avatar: s.avatar || null, level: s.level || null,
       connected: s.kind === 'bot' ? true : this.isConnected(s.id), you: s.id === userId,
-      host: s.id === this.hostId, durak: this.tally[s.id] || 0,
+      host: s.id === this.hostId, durak: (this.board.get(s.id) || {}).duraks || 0,
+      points: (this.board.get(s.id) || {}).points || 0,
     });
     return {
       code: this.code, solo: this.solo, status: this.status,
@@ -262,6 +291,11 @@ class Room {
       settings: this.settings,
       seats: this.seats.map(seatView),
       games: this.games,
+      board: this.boardView(userId),
+      lastScores: this.lastScores && {
+        mult: this.lastScores.mult,
+        rows: this.lastScores.rows.map((r) => ({ name: r.name, kind: r.kind, points: r.points, place: r.place, durak: r.durak, caught: r.caught, wasCaught: r.wasCaught, left: !!r.left, you: r.id === userId, ranked: isRanked(r.id) })),
+      },
       game: g ? {
         ...g.view(gi),
         names: this.gameSeats.map(seatView),
@@ -294,7 +328,8 @@ function sanitizeAction(a) {
 }
 
 class RoomManager {
-  constructor() {
+  constructor(store) {
+    this.store = store || null;
     this.rooms = new Map();
     setInterval(() => this.sweep(), 60000).unref();
   }

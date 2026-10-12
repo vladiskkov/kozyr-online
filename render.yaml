@@ -21,3 +21,7 @@ services:
         value: 96122002055-12t0takn8c80cb4u530epn1ti05lh8v8.apps.googleusercontent.com
       - key: ALLOW_GUESTS
         value: "true"
+      # Postgres connection string for the global leaderboard (e.g. a free Neon database).
+      # Without it the leaderboard lives in memory and resets when the server sleeps.
+      - key: DATABASE_URL
+        sync: false

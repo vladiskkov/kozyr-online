@@ -34,6 +34,7 @@ class Game {
     this.eventSeq = 0;
     this.lastBout = null; // summary of the previous bout for the UI
     this.noAccuse = new Set(); // players who lost the right to accuse
+    this.caughtLog = []; // { by, cheater } for scoring
     this._start();
   }
 
@@ -312,6 +313,7 @@ class Game {
     if (cheated) {
       const cards = b.table.flatMap((p) => (p.d ? [p.a, p.d] : [p.a]));
       this._event('caught', i, { cheater: by, card: cardId, count: cards.length });
+      this.caughtLog.push({ by: i, cheater: by });
       const wasDefender = by === b.defender;
       b.table = [];
       this.hand(by).push(...cards);

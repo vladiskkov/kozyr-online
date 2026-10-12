@@ -6,6 +6,7 @@ const express = require('express');
 const { Server } = require('socket.io');
 const auth = require('./auth.js');
 const { RoomManager } = require('./rooms.js');
+const { createStore } = require('./store.js');
 
 const PORT = Number(process.env.PORT) || 3000;
 const PUBLIC = path.join(__dirname, '..', 'public');
@@ -36,6 +37,27 @@ app.use((req, res, next) => {
 });
 
 app.get('/healthz', (req, res) => res.send('ok'));
+
+const store = createStore();
+let lbCache = { at: 0, v: -1, top: null };
+app.get('/api/leaderboard', async (req, res) => {
+  try {
+    await store.ready;
+    if (!lbCache.top || lbCache.v !== store.version || Date.now() - lbCache.at > 60000) {
+      const top = await store.top();
+      let prev = null;
+      top.forEach((r, i) => { r.rank = prev && prev.points === r.points ? prev.rank : i + 1; prev = r; });
+      lbCache = { at: Date.now(), v: store.version, top };
+    }
+    const user = auth.userFromRequest(req);
+    const me = user && user.id.startsWith('g_') ? await store.me(user.id) : null;
+    const clean = (r) => ({ rank: r.rank, name: r.name, avatar: r.avatar, points: r.points, games: r.games, wins: r.wins, duraks: r.duraks, caught: r.caught, you: !!user && r.user_id === user.id });
+    res.json({ top: lbCache.top.map((r) => clean(r)), me: me ? clean(me) : null, guest: !!user && !user.id.startsWith('g_'), persistent: store.kind === 'postgres' });
+  } catch (e) {
+    console.error('[leaderboard]', e.message);
+    res.status(503).json({ error: 'Таблиця лідерів тимчасово недоступна' });
+  }
+});
 auth.routes(app);
 // Each deploy gets its own asset version, so phones never keep an old app.js/app.css.
 const VERSION = (process.env.RENDER_GIT_COMMIT || Date.now().toString(36)).slice(0, 10);
@@ -49,7 +71,7 @@ app.use(express.static(PUBLIC, {
 
 const server = http.createServer(app);
 const io = new Server(server, { maxHttpBufferSize: 1e4, pingInterval: 20000, pingTimeout: 25000 });
-const rooms = new RoomManager();
+const rooms = new RoomManager(store);
 
 io.use((socket, next) => {
   const user = auth.userFromRequest(socket.request);
